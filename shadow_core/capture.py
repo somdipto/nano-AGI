@@ -109,18 +109,35 @@ class RealTimeCapture:
             "--no-timestamps",
             "-np",
             "--language", "en",
-            "--no-gpu",  # CPU-only (Metal crashes on Intel Macs)
+            "--no-gpu",         # CPU-only (Metal crashes on Intel Macs)
+            "--split-on-word",  # Split at word boundaries, not mid-word
+            "--max-len", "0",   # No artificial length limit per segment
         ]
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             lines = [l.strip() for l in result.stdout.split("\n") if l.strip()]
             text = " ".join(lines) if lines else ""
 
-            # Filter whisper noise
+            # Filter whisper noise / hallucinations
             if "[BLANK_AUDIO]" in text:
                 return ""
-            return text
+            # Remove common hallucination markers
+            import re
+            text = re.sub(r'\[.*?\]', '', text)
+            text = re.sub(r'\(.*?\)', '', text)
+            # Collapse repeated phrases (whisper hallucination)
+            words = text.split()
+            if len(words) > 6:
+                # Check if last 3 words repeat
+                tail = ' '.join(words[-3:])
+                count = text.count(tail)
+                if count > 2:
+                    # Hallucination detected, trim
+                    idx = text.index(tail)
+                    text = text[:idx + len(tail)]
+            text = ' '.join(text.split())  # Normalize whitespace
+            return text.strip()
         except (subprocess.TimeoutExpired, Exception):
             return ""
 

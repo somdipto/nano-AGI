@@ -29,7 +29,7 @@ class SandboxAgent:
         - <artifacts>      (emails, code, notes, etc.)
     """
 
-    TIMEOUT = 60  # seconds max per agent
+    TIMEOUT = 120  # seconds max per agent (LLM calls take time)
 
     def __init__(self, todo_id: int, task: dict, workspace_root: Path):
         self.todo_id = todo_id
@@ -56,176 +56,127 @@ class SandboxAgent:
         }
         self.status_path.write_text(json.dumps(manifest, indent=2))
 
+    def get_result(self) -> str:
+        """Read the solution result from status.json."""
+        st = self.status()
+        return st.get("result", "")
+
     def _build_agent_script(self) -> str:
-        """Generate the Python script that runs inside the sandbox."""
+        """Generate the Python script that runs inside the sandbox.
+
+        The agent calls the Gemini proxy (CLIProxyAPI) to generate real
+        solutions instead of static templates.
+        """
         task_json = json.dumps(self.task)
         workspace_str = str(self.workspace)
         status_str = str(self.status_path)
 
-        # Use .replace() to avoid f-string + triple-quote nesting issues
         script = '''#!/usr/bin/env python3
-"""Auto-generated sandbox agent for todo __TODO_ID__"""
-import json, os, sys, time
+"""Auto-generated sandbox agent for todo __TODO_ID__
+Calls Gemini proxy for real solutions."""
+import json, os, sys, time, urllib.request, urllib.error
 import datetime as dt
 from pathlib import Path
 
 WORKSPACE = Path("__WORKSPACE__")
 STATUS = Path("__STATUS__")
 TASK = json.loads("""__TASK_JSON__""")
+GEMINI_URL = "http://127.0.0.1:8317/v1/chat/completions"
+MODEL = "gemini-2.5-flash"
 
 def log(msg):
     with open(WORKSPACE / "agent.log", "a") as f:
         f.write(f"[{dt.datetime.now().strftime('%H:%M:%S')}] {msg}\\n")
 
-def update_status(status, artifacts=None):
+def update_status(status, result=None, artifacts=None):
     data = {
         "todo_id": __TODO_ID__,
         "status": status,
         "artifacts": artifacts or [],
         "updated_at": time.time(),
     }
+    if result:
+        data["result"] = result
     STATUS.write_text(json.dumps(data, indent=2))
 
+def call_gemini(system_prompt, user_prompt, max_tokens=2048):
+    """Call Gemini proxy API and return the text response."""
+    payload = json.dumps({
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.4,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        GEMINI_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        log(f"Gemini call failed: {e}")
+        return None
+
 def main():
-    task_text = TASK.get("task", "").lower()
+    task_text = TASK.get("task", "")
     category = TASK.get("category", "other").lower()
-    log(f"Agent started: {TASK.get('task', 'unknown')}")
+    priority = TASK.get("priority", 5)
+
+    log(f"Agent started: {task_text}")
     update_status("running")
 
-    try:
-        if category == "email" or "email" in task_text:
-            draft_email()
-        elif category == "code" or any(w in task_text for w in ["code", "script", "program", "build", "implement"]):
-            draft_code()
-        elif category == "research" or any(w in task_text for w in ["research", "find", "look up", "search"]):
-            do_research()
-        elif category == "schedule" or any(w in task_text for w in ["schedule", "meeting", "calendar", "remind"]):
-            create_schedule()
-        else:
-            create_plan()
+    # Build system prompt based on category
+    system_prompts = {
+        "email": "You are a professional email writer. Draft a complete, polished email based on the user's request. Include subject line, greeting, body, and sign-off.",
+        "code": "You are an expert programmer. Write complete, working code that solves the user's request. Include comments and a brief explanation.",
+        "research": "You are a thorough researcher. Provide a comprehensive analysis with key findings, supporting evidence, and actionable conclusions.",
+        "schedule": "You are a scheduling assistant. Create a detailed plan with time estimates, dependencies, and preparation steps.",
+        "call": "You are a communication expert. Prepare talking points, key arguments, and anticipated questions for this call/conversation.",
+        "purchase": "You are a smart shopping assistant. Compare options, list pros/cons, and give a clear recommendation with reasoning.",
+    }
+    default_prompt = "You are Shadow Agent, an autonomous AI assistant. Solve the user's request thoroughly and provide a complete, actionable answer."
+    system_msg = system_prompts.get(category, default_prompt)
 
-        artifacts = [str(f.relative_to(WORKSPACE)) for f in WORKSPACE.iterdir()
-                     if f.is_file() and f.name not in ("agent_runner.py", "status.json", "agent.log")]
-        update_status("completed", artifacts)
-        log(f"Agent finished. Artifacts: {artifacts}")
+    user_msg = f"Task: {task_text}\\nPriority: {priority}/10\\nCategory: {category}\\n\\nProvide a complete, detailed solution. Be thorough but concise."
+
+    try:
+        log("Calling Gemini for solution...")
+        result = call_gemini(system_msg, user_msg)
+
+        if result:
+            log(f"Got response ({len(result)} chars)")
+
+            # Write solution artifact
+            solution_path = WORKSPACE / "solution.md"
+            solution_path.write_text(f"# {task_text}\\n\\n{result}\\n")
+            log("Wrote solution.md")
+
+            # Collect artifacts
+            artifacts = [
+                str(f.relative_to(WORKSPACE)) for f in WORKSPACE.iterdir()
+                if f.is_file() and f.name not in ("agent_runner.py", "status.json", "agent.log")
+            ]
+            update_status("completed", result=result, artifacts=artifacts)
+            log(f"Agent finished. Artifacts: {artifacts}")
+
+        else:
+            # Gemini unavailable — write a fallback note
+            fallback = f"Shadow Agent could not reach Gemini for task: {task_text}. Please retry or handle manually."
+            solution_path = WORKSPACE / "solution.md"
+            solution_path.write_text(f"# {task_text}\\n\\n{fallback}\\n")
+            update_status("completed", result=fallback, artifacts=["solution.md"])
+            log("Gemini unavailable, wrote fallback")
 
     except Exception as e:
         log(f"ERROR: {e}")
-        update_status("failed")
-
-def draft_email():
-    task = TASK.get("task", "")
-    draft = WORKSPACE / "email_draft.txt"
-    lines = [
-        f"Subject: Re: {task}",
-        "",
-        "Dear [Recipient],",
-        "",
-        f"I'm writing regarding: {task}",
-        "",
-        "[Auto-drafted by Shadow Agent]",
-        "",
-        "Key points:",
-        "1. [Point 1]",
-        "2. [Point 2]",
-        "3. [Point 3]",
-        "",
-        "Please review and let me know if you need any changes.",
-        "",
-        "Best regards,",
-        "[Your Name]",
-    ]
-    draft.write_text("\\n".join(lines))
-    log("Created email draft")
-
-def draft_code():
-    task = TASK.get("task", "")
-    code = WORKSPACE / "solution.py"
-    lines = [
-        "#!/usr/bin/env python3",
-        f'"""Auto-generated solution for: {task}"""',
-        "",
-        "def solve():",
-        f'    """Task: {task}"""',
-        f'    print("Working on: {task}")',
-        '    return "done"',
-        "",
-        'if __name__ == "__main__":',
-        "    result = solve()",
-        '    print(f"Result: {result}")',
-    ]
-    code.write_text("\\n".join(lines))
-    readme = WORKSPACE / "README.md"
-    readme.write_text(f"# {task}\\n\\nAuto-generated by Shadow Agent.\\n\\n## Files\\n- `solution.py`\\n")
-    log("Created code scaffold + README")
-
-def do_research():
-    task = TASK.get("task", "")
-    notes = WORKSPACE / "research_notes.md"
-    lines = [
-        f"# Research: {task}",
-        "",
-        "## Summary",
-        "[Auto-generated research template]",
-        "",
-        "## Key Findings",
-        "1. Finding 1",
-        "2. Finding 2",
-        "3. Finding 3",
-        "",
-        "## Sources",
-        "- [Source 1]",
-        "- [Source 2]",
-        "",
-        "## Next Steps",
-        "- Verify findings",
-        "- Deep-dive on key topics",
-    ]
-    notes.write_text("\\n".join(lines))
-    log("Created research notes template")
-
-def create_schedule():
-    task = TASK.get("task", "")
-    sched = WORKSPACE / "schedule.md"
-    lines = [
-        f"# Schedule: {task}",
-        "",
-        "## Details",
-        f"- **What:** {task}",
-        "- **When:** [TBD]",
-        "- **Where:** [TBD]",
-        "- **Who:** [TBD]",
-        "",
-        "## Preparation",
-        "- [ ] Prepare agenda",
-        "- [ ] Send invitations",
-        "- [ ] Prepare materials",
-    ]
-    sched.write_text("\\n".join(lines))
-    log("Created schedule template")
-
-def create_plan():
-    task = TASK.get("task", "")
-    lines = [
-        f"# Plan: {task}",
-        "",
-        "## Objective",
-        task,
-        "",
-        "## Steps",
-        "1. Analyze requirements",
-        "2. Break down into sub-tasks",
-        "3. Execute each sub-task",
-        "4. Verify results",
-        "",
-        "## Notes",
-        "- Created by Shadow Agent",
-        f"- Priority: {TASK.get('priority', 5)}",
-        f"- Category: {TASK.get('category', 'other')}",
-    ]
-    plan = WORKSPACE / "plan.md"
-    plan.write_text("\\n".join(lines))
-    log("Created task plan")
+        update_status("failed", result=f"Agent error: {e}")
 
 if __name__ == "__main__":
     main()
@@ -269,8 +220,8 @@ if __name__ == "__main__":
     def _set_limits(self):
         """Set resource limits for the sandboxed process (macOS-safe)."""
         try:
-            # 30 seconds CPU time max
-            resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
+            # 90 seconds CPU time max (Gemini calls need time)
+            resource.setrlimit(resource.RLIMIT_CPU, (90, 90))
         except (ValueError, OSError):
             pass  # Some platforms don't support this
 

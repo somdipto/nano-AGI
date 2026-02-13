@@ -7,6 +7,7 @@ import json
 import shutil
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -34,6 +35,9 @@ class ShadowSwarm:
         self.active_agents: dict[int, SandboxAgent] = {}
         self._lock = threading.Lock()
         self._running = False
+
+        # Completed results queue — server pops and pushes to WS clients
+        self.completed_results: deque = deque(maxlen=50)
 
         # Background threads
         self._spawn_thread: threading.Thread | None = None
@@ -98,7 +102,7 @@ class ShadowSwarm:
             except Exception as e:
                 print(f"[Swarm] Spawn error: {e}")
 
-            time.sleep(3)  # Poll every 3 seconds
+            time.sleep(1)  # Poll every 1 second for fast pickup
 
     def _monitor_loop(self):
         """Monitor agent health, harvest completed results."""
@@ -111,6 +115,7 @@ class ShadowSwarm:
                         if not agent.is_running():
                             status = agent.status()
                             final = status.get("status", "unknown")
+                            result_text = status.get("result", "")
                             artifacts = agent.artifacts()
 
                             # Update DB
@@ -124,6 +129,16 @@ class ShadowSwarm:
                                 artifacts=json.dumps(artifacts),
                             )
 
+                            # Push result to completed_results queue
+                            self.completed_results.append({
+                                "todo_id": tid,
+                                "task": agent.task.get("task", ""),
+                                "category": agent.task.get("category", "other"),
+                                "status": db_status,
+                                "result": result_text,
+                                "artifacts": artifacts,
+                            })
+
                             print(f"[Swarm] Agent #{tid} → {db_status} ({len(artifacts)} artifacts)")
                             completed_ids.append(tid)
 
@@ -133,12 +148,12 @@ class ShadowSwarm:
             except Exception as e:
                 print(f"[Swarm] Monitor error: {e}")
 
-            time.sleep(2)
+            time.sleep(1)  # Check every 1s
 
     # ── Manual control ──
 
     def spawn_for_todo(self, todo_id: int, task: dict) -> bool:
-        """Manually spawn an agent for a specific todo."""
+        """Immediately spawn an agent for a specific todo (no polling wait)."""
         with self._lock:
             if todo_id in self.active_agents:
                 return False  # Already running
@@ -153,8 +168,20 @@ class ShadowSwarm:
             with self._lock:
                 self.active_agents[todo_id] = agent
             self.db.update_todo_status(todo_id, "active")
+            print(f"[Swarm] Instant-spawned agent #{todo_id}: {task.get('task', '')[:50]}")
             return True
         return False
+
+    def get_agent_result(self, todo_id: int) -> str:
+        """Read the solution result for a completed agent."""
+        ws = self.workspace_root / f"todo_{todo_id}" / "status.json"
+        if ws.exists():
+            try:
+                data = json.loads(ws.read_text())
+                return data.get("result", "")
+            except (json.JSONDecodeError, IOError):
+                return ""
+        return ""
 
     def approve_todo(self, todo_id: int) -> bool:
         """Move sandbox artifacts to approval directory."""

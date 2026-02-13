@@ -59,6 +59,51 @@ def _offline_analyze(text: str) -> dict:
         "extracted_tasks": [],
     }
 
+# ── Background Agent Watcher ──
+async def _watch_agent_result(websocket: WebSocket, todo_id: int, task_text: str):
+    """Watch for agent completion and push the result to the WebSocket."""
+    max_wait = 120  # seconds
+    poll_interval = 2  # seconds
+    elapsed = 0
+
+    while elapsed < max_wait:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+        # Check completed_results deque for our todo
+        result_data = None
+        for item in list(swarm.completed_results):
+            if item["todo_id"] == todo_id:
+                result_data = item
+                break
+
+        if result_data:
+            try:
+                await websocket.send_json({
+                    "type": "agent_result",
+                    "todo_id": todo_id,
+                    "task": task_text,
+                    "result": result_data.get("result", ""),
+                    "status": result_data.get("status", "completed"),
+                    "artifacts": result_data.get("artifacts", []),
+                })
+            except Exception:
+                pass  # WebSocket may have closed
+            return
+
+    # Timed out — send failure notice
+    try:
+        await websocket.send_json({
+            "type": "agent_result",
+            "todo_id": todo_id,
+            "task": task_text,
+            "result": f"Agent timed out after {max_wait}s for: {task_text}",
+            "status": "timeout",
+            "artifacts": [],
+        })
+    except Exception:
+        pass
+
 # ── WebSocket: Real-time audio ──
 @app.websocket("/ws/audio")
 async def audio_ws(websocket: WebSocket):
@@ -76,12 +121,16 @@ async def audio_ws(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_bytes()
-            if len(data) < 500:
+            if len(data) < 1000:  # Skip tiny fragments
                 continue
 
             # Transcribe
             text = await asyncio.to_thread(capture.transcribe_blob, data)
-            if not text or len(text.strip()) < 4:
+            if not text or len(text.strip()) < 8:  # Skip very short noise
+                continue
+
+            # Server-side dedup: skip if identical to last transcript
+            if all_transcripts and text.strip() == all_transcripts[-1].strip():
                 continue
 
             ts = datetime.now()
@@ -124,24 +173,48 @@ async def audio_ws(websocket: WebSocket):
                 "summary": analysis.get("summary", text[:80]),
             })
 
-            # Extract todos
+            # Extract todos and IMMEDIATELY spawn agents
             for task_info in analysis.get("extracted_tasks", []):
                 task_text = task_info.get("task", "")
                 if task_text:
+                    task_priority = task_info.get("priority", priority)
+                    task_category = task_info.get("category", "other")
                     todo_id = db.insert_todo(
                         chunk_id=chunk_id,
                         task=task_text,
-                        priority=task_info.get("priority", priority),
-                        category=task_info.get("category", "other"),
+                        priority=task_priority,
+                        category=task_category,
                         deadline=task_info.get("deadline"),
                     )
                     await websocket.send_json({
                         "type": "todo",
                         "id": todo_id,
                         "task": task_text,
-                        "priority": task_info.get("priority", priority),
-                        "category": task_info.get("category", "other"),
+                        "priority": task_priority,
+                        "category": task_category,
                     })
+
+                    # Instant-spawn agent (no waiting for poll loop)
+                    todo_dict = {
+                        "id": todo_id,
+                        "task": task_text,
+                        "priority": task_priority,
+                        "category": task_category,
+                        "deadline": task_info.get("deadline"),
+                    }
+                    spawned = await asyncio.to_thread(
+                        swarm.spawn_for_todo, todo_id, todo_dict
+                    )
+                    if spawned:
+                        await websocket.send_json({
+                            "type": "agent_spawned",
+                            "todo_id": todo_id,
+                            "task": task_text,
+                        })
+                        # Background: watch for completion → push result
+                        asyncio.create_task(
+                            _watch_agent_result(websocket, todo_id, task_text)
+                        )
 
     except WebSocketDisconnect:
         pass
