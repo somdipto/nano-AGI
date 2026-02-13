@@ -1,6 +1,6 @@
 """
-Voice Memory — Premium Web App
-Record → Transcribe (Whisper.cpp) → Store (memU) → Summarize (Gemini)
+Nano-AGI — Shadow Core Web Server
+Premium voice capture + real-time analysis + autonomous task extraction.
 
 Run:  ./.venv/bin/python3 web/server.py
 Open: http://localhost:3777
@@ -10,250 +10,247 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# Add project src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from memu.voice_capture import WhisperCapture
+from shadow_core.database import ShadowDatabase
+from shadow_core.capture import RealTimeCapture
+from shadow_core.agent import ShadowAgent, get_agent
 
-# ---------------------------------------------------------------------------
-# App setup
-# ---------------------------------------------------------------------------
+# ── App ──
 
-app = FastAPI(title="Voice Memory", docs_url=None, redoc_url=None)
+app = FastAPI(title="Nano-AGI", docs_url=None, redoc_url=None)
 
-# Static files
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# Whisper capture instance (lazy init)
-_whisper: Optional[WhisperCapture] = None
+# ── Shared state ──
 
+db = ShadowDatabase()
+capture = RealTimeCapture()
+agent = get_agent()
 
-def get_whisper() -> WhisperCapture:
-    global _whisper
-    if _whisper is None:
-        _whisper = WhisperCapture()
-    return _whisper
+print()
+print("=" * 55)
+print("   NANO-AGI — Shadow Core")
+print("=" * 55)
+print(f"   Database:  {db.db_path}")
+print(f"   Agent:     {'🟢 online' if agent.available else '🟡 offline (local mode)'}")
+print(f"   Whisper:   {capture._whisper_bin}")
+print()
 
-
-# ---------------------------------------------------------------------------
-# In-memory session store (lightweight — no DB needed for MVP)
-# ---------------------------------------------------------------------------
-
-sessions: dict[str, dict] = {}
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
+# ── Routes ──
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Serve the main page."""
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/api/stats")
+async def stats():
+    return db.get_stats()
 
 
 @app.get("/api/sessions")
 async def list_sessions():
-    """List all past sessions."""
-    result = []
-    for sid, s in sorted(sessions.items(), key=lambda x: x[1]["started_at"], reverse=True):
-        result.append({
-            "id": sid,
-            "started_at": s["started_at"],
-            "ended_at": s.get("ended_at"),
-            "transcript_count": len(s["transcripts"]),
-            "summary": s.get("summary", ""),
-            "duration": s.get("duration", 0),
-        })
-    return result
+    return db.get_sessions()
 
 
-@app.get("/api/sessions/{session_id}")
-async def get_session(session_id: str):
-    """Get full session details."""
-    s = sessions.get(session_id)
-    if not s:
-        return {"error": "Session not found"}
-    return s
+@app.get("/api/todos")
+async def list_todos():
+    return db.get_all_todos()
 
 
-# ---------------------------------------------------------------------------
-# WebSocket — real-time audio streaming
-# ---------------------------------------------------------------------------
+@app.get("/api/chunks")
+async def list_chunks():
+    return db.get_recent_chunks(limit=50)
+
+
+@app.post("/api/todos/{todo_id}/status")
+async def update_todo(todo_id: int, body: dict):
+    status = body.get("status", "done")
+    db.update_todo_status(todo_id, status)
+    return {"ok": True}
+
+
+# ── WebSocket — Real-time audio ──
 
 @app.websocket("/ws/audio")
 async def audio_ws(websocket: WebSocket):
     """
-    Receive audio chunks via WebSocket, transcribe with Whisper, stream back.
+    Browser sends audio chunks → Whisper transcribes → Agent analyzes → UI updates.
 
-    Protocol:
-      Client → Server:  binary audio data (webm/wav chunks)
-      Server → Client:  JSON messages:
-        {"type": "transcript", "text": "...", "timestamp": "..."}
-        {"type": "session_started", "session_id": "..."}
-        {"type": "session_ended", "session_id": "...", "summary": "..."}
-        {"type": "error", "message": "..."}
+    Messages FROM server:
+      session_started  → { session_id }
+      transcript       → { text, timestamp, chunk_id, analysis }
+      todo             → { id, task, priority, category }
+      session_ended    → { summary, stats }
     """
     await websocket.accept()
-    whisper = get_whisper()
 
     session_id = str(uuid.uuid4())[:8]
-    sessions[session_id] = {
-        "id": session_id,
-        "started_at": datetime.now().isoformat(),
-        "transcripts": [],
-        "summary": "",
-        "duration": 0,
-    }
+    db.create_session(session_id)
 
-    await websocket.send_json({
-        "type": "session_started",
-        "session_id": session_id,
-    })
+    await websocket.send_json({"type": "session_started", "session_id": session_id})
 
-    chunk_count = 0
     start_time = datetime.now()
+    chunk_count = 0
+    all_transcripts: list[str] = []
+    context_window: list[str] = []
 
     try:
         while True:
-            # Receive audio blob from browser
+            # Receive audio blob
             data = await websocket.receive_bytes()
-
-            if len(data) < 1000:
-                # Too small — likely not valid audio
+            if len(data) < 500:
                 continue
 
             chunk_count += 1
 
-            # Save to temp file
-            tmp = tempfile.NamedTemporaryFile(
-                suffix=".wav", delete=False, dir="/tmp"
+            # Run transcription in thread (blocking I/O)
+            text = await asyncio.to_thread(capture.transcribe_blob, data)
+
+            if not text or len(text.strip()) < 4:
+                # Send heartbeat so UI knows we're alive
+                await websocket.send_json({
+                    "type": "heartbeat",
+                    "chunk": chunk_count,
+                })
+                continue
+
+            text = text.strip()
+            ts = datetime.now()
+            all_transcripts.append(text)
+
+            # Store chunk
+            chunk_id = db.insert_chunk(
+                timestamp=ts.timestamp(),
+                text=text,
             )
-            tmp.write(data)
-            tmp.close()
 
-            try:
-                # Transcribe with Whisper.cpp
-                text = whisper.transcribe(tmp.name)
+            # Update context
+            context_window.append(text)
+            if len(context_window) > 10:
+                context_window.pop(0)
 
-                # Filter non-speech
-                if text and len(text.strip()) > 3 and "[BLANK_AUDIO]" not in text:
-                    timestamp = datetime.now().isoformat()
-                    transcript_entry = {
-                        "text": text.strip(),
-                        "timestamp": timestamp,
-                        "chunk": chunk_count,
-                    }
-                    sessions[session_id]["transcripts"].append(transcript_entry)
+            # Send transcript immediately (before analysis)
+            await websocket.send_json({
+                "type": "transcript",
+                "text": text,
+                "timestamp": ts.isoformat(),
+                "chunk": chunk_count,
+                "chunk_id": chunk_id,
+            })
 
+            # Analyze with Shadow Agent (in thread)
+            if agent.available:
+                analysis = await asyncio.to_thread(
+                    agent.analyze_chunk, text, context_window
+                )
+            else:
+                # Offline heuristics
+                analysis = _offline_analyze(text)
+
+            intent = analysis.get("intent", "ignore")
+            priority = analysis.get("priority", 1)
+
+            # Update chunk with analysis
+            db.update_chunk_intent(chunk_id, intent, priority)
+
+            # Send analysis
+            await websocket.send_json({
+                "type": "analysis",
+                "chunk_id": chunk_id,
+                "intent": intent,
+                "priority": priority,
+                "confidence": analysis.get("confidence", 0),
+                "summary": analysis.get("summary", text[:80]),
+            })
+
+            # Extract todos
+            for task_info in analysis.get("extracted_tasks", []):
+                task_text = task_info.get("task", "")
+                if task_text:
+                    todo_id = db.insert_todo(
+                        chunk_id=chunk_id,
+                        task=task_text,
+                        priority=task_info.get("priority", priority),
+                        category=task_info.get("category", "other"),
+                        deadline=task_info.get("deadline"),
+                    )
                     await websocket.send_json({
-                        "type": "transcript",
-                        "text": text.strip(),
-                        "timestamp": timestamp,
-                        "chunk": chunk_count,
+                        "type": "todo",
+                        "id": todo_id,
+                        "task": task_text,
+                        "priority": task_info.get("priority", priority),
+                        "category": task_info.get("category", "other"),
                     })
-            finally:
-                # Cleanup temp file
-                try:
-                    os.unlink(tmp.name)
-                except OSError:
-                    pass
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
         try:
-            await websocket.send_json({"type": "error", "message": str(e)})
+            await websocket.send_json({"type": "error", "message": str(e)[:200]})
         except Exception:
             pass
     finally:
         # Session ended — generate summary
-        elapsed = (datetime.now() - start_time).total_seconds()
-        sessions[session_id]["ended_at"] = datetime.now().isoformat()
-        sessions[session_id]["duration"] = round(elapsed)
+        elapsed = int((datetime.now() - start_time).total_seconds())
 
-        all_text = " ".join(
-            t["text"] for t in sessions[session_id]["transcripts"]
-        )
-
-        if all_text.strip():
-            # Build a simple summary (Gemini-free for reliability)
-            word_count = len(all_text.split())
-            summary = _build_summary(all_text, elapsed)
-            sessions[session_id]["summary"] = summary
+        if all_transcripts and agent.available:
+            summary = await asyncio.to_thread(
+                agent.summarize_session, all_transcripts, elapsed
+            )
+        elif all_transcripts:
+            full = " ".join(all_transcripts)
+            wc = len(full.split())
+            summary = f"{elapsed // 60}m {elapsed % 60}s • {wc} words • {len(all_transcripts)} chunks"
         else:
-            sessions[session_id]["summary"] = "No speech detected during this session."
+            summary = "No speech detected."
 
-        # Try to send final summary
+        db.end_session(session_id, elapsed, chunk_count, summary)
+
         try:
             await websocket.send_json({
                 "type": "session_ended",
                 "session_id": session_id,
-                "summary": sessions[session_id]["summary"],
-                "duration": sessions[session_id]["duration"],
-                "transcript_count": len(sessions[session_id]["transcripts"]),
+                "summary": summary,
+                "duration": elapsed,
+                "chunks": chunk_count,
+                "transcripts": len(all_transcripts),
             })
         except Exception:
             pass
 
 
-def _build_summary(text: str, duration: float) -> str:
-    """Build a local summary from the transcript text."""
-    words = text.split()
-    word_count = len(words)
-    minutes = int(duration // 60)
-    seconds = int(duration % 60)
-
-    # Extract key sentences (simple approach — first and last + longest)
-    sentences = [s.strip() for s in text.replace(".", ".\n").split("\n") if s.strip()]
-
-    if len(sentences) <= 3:
-        key_points = sentences
+def _offline_analyze(text: str) -> dict:
+    """Heuristic analysis when CLIProxyAPI is unavailable."""
+    tl = text.lower()
+    if any(w in tl for w in ["urgent", "asap", "deadline", "emergency"]):
+        return {"intent": "urgent", "priority": 9, "confidence": 0.6, "summary": text[:80], "extracted_tasks": []}
+    elif any(w in tl for w in ["need to", "have to", "should", "must", "todo", "remind"]):
+        return {"intent": "task", "priority": 6, "confidence": 0.5, "summary": text[:80], "extracted_tasks": []}
+    elif text.rstrip().endswith("?"):
+        return {"intent": "question", "priority": 4, "confidence": 0.5, "summary": text[:80], "extracted_tasks": []}
     else:
-        # First, middle, and last sentences
-        key_points = [
-            sentences[0],
-            sentences[len(sentences) // 2],
-            sentences[-1],
-        ]
-
-    summary = f"📊 Session: {minutes}m {seconds}s • {word_count} words • {len(sentences)} sentences\n\n"
-    summary += "📝 Key points:\n"
-    for i, point in enumerate(key_points, 1):
-        summary += f"  {i}. {point}\n"
-    summary += f"\n💬 Full transcript: {text[:500]}{'...' if len(text) > 500 else ''}"
-
-    return summary
+        return {"intent": "casual", "priority": 2, "confidence": 0.4, "summary": text[:80], "extracted_tasks": []}
 
 
-# ---------------------------------------------------------------------------
-# Run
-# ---------------------------------------------------------------------------
+# ── Run ──
 
 if __name__ == "__main__":
     import uvicorn
 
-    print("=" * 55)
-    print("🎤  Voice Memory — Premium Web App")
-    print("=" * 55)
-    print()
-    print("🌐  Open: http://localhost:3777")
-    print("🧠  Whisper.cpp: local transcription")
-    print("📂  Transcripts stored in-memory")
-    print()
-    print("Press Ctrl+C to stop")
-    print()
+    print(f"🌐  Open: http://localhost:3777")
+    print(f"⏹️   Press Ctrl+C to stop\n")
 
     uvicorn.run(
         "server:app",
