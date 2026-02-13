@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🧠 memU - Autonomous AI Memory Framework
+# 🤖 nano-AGI - Autonomous AI Agent Framework
 
-### *Your AI's Long-Term Memory, Perfected*
+### *Shadow Agent: Your 24/7 Intelligent Assistant*
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -19,7 +19,7 @@
 
 ### 🎯 **Build AI agents that actually remember**
 
-memU is a production-ready framework for giving AI agents persistent, searchable, and intelligent memory. Voice input, Telegram bots, web dashboards - all with zero-cost AI via Gemini OAuth.
+nano-AGI is a production-ready framework for building autonomous AI agents with persistent memory. Voice input, Telegram bots, web dashboards - all powered by Shadow Agent with zero-cost AI via Gemini OAuth.
 
 </div>
 
@@ -79,7 +79,7 @@ memU is a production-ready framework for giving AI agents persistent, searchable
 ```bash
 # Clone the repository
 git clone https://github.com/somdipto/nano-AGI.git
-cd memU
+cd nano-AGI
 
 # Install dependencies (requires Python 3.13+)
 make install
@@ -96,6 +96,9 @@ cp .env.example .env
 
 # Add your Telegram bot token (get from @BotFather)
 echo "TELEGRAM_BOT_TOKEN=your_token_here" >> .env
+
+# Configure Shadow Agent
+echo "AGENT_NAME=Shadow Agent" >> .env
 ```
 
 ### Launch
@@ -140,23 +143,22 @@ Speak and it remembers
 ### Python API
 
 ```python
-from memu import MemoryService
+from shadow_agent import AgentService
 
-# Initialize service
-service = MemoryService(
+# Initialize Shadow Agent
+agent = AgentService(
     llm_provider="gemini_proxy",
-    database_url="sqlite:///./memu.db"
+    database_url="sqlite:///./agent.db"
 )
 
 # Store a memory
-await service.create_memory_item(
-    memory_type="conversation",
-    memory_content="User prefers dark mode",
+await agent.remember(
+    content="User prefers dark mode",
     category="preferences"
 )
 
 # Search memories
-results = await service.search_memories(
+results = await agent.recall(
     query="what does user prefer?",
     limit=5
 )
@@ -332,13 +334,13 @@ Local data privacy
 
 ---
 
-## 🌟 Why memU?
+## 🌟 Why nano-AGI?
 
 <table>
 <tr>
 <td width="50%">
 
-### ❌ **Without memU**
+### ❌ **Without nano-AGI**
 - ❌ AI forgets after each session
 - ❌ Expensive API costs
 - ❌ Privacy concerns with cloud storage
@@ -348,7 +350,7 @@ Local data privacy
 </td>
 <td width="50%">
 
-### ✅ **With memU**
+### ✅ **With nano-AGI**
 - ✅ Persistent memory across sessions
 - ✅ Zero cost with Gemini OAuth
 - ✅ 100% local data processing

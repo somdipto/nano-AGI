@@ -33,7 +33,7 @@ This project implements a **fully autonomous AI agent** that processes multi-mod
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  MEMORY LAYER: memU Framework                                    │
+│  MEMORY LAYER: nano-AGI Framework                                │
 │  ↓ SQLite | Semantic Search | Category Management               │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
@@ -86,7 +86,7 @@ This project implements a **fully autonomous AI agent** that processes multi-mod
 - **Use for:** Offline operation, privacy-critical tasks
 - **Status:** ✅ Available
 
-### 3. Memory System (memU Framework)
+### 3. Memory System (nano-AGI Framework)
 
 #### Database Layer (database/sqlite/)
 - **Storage:** SQLite with full-text search
@@ -198,7 +198,7 @@ Features:
 ## Project Structure
 
 ```
-memU/
+nano-AGI/
 ├── src/memu/                      # Core framework
 │   ├── app/                       # Memory service
 │   │   ├── service.py             # Main MemoryService
@@ -312,7 +312,7 @@ GEMINI_EMBED_MODEL=text-embedding-004
 LLM_TIMEOUT_MS=60000
 
 # Database
-DATABASE_URL=sqlite:///./memu.db
+DATABASE_URL=sqlite:///./agent.db
 
 # Voice Capture
 WHISPER_MODEL=base.en
@@ -347,11 +347,11 @@ oauth:
 ### Memory Service Settings
 ```python
 # In your code
-from memu import MemoryService
+from shadow_agent import AgentService
 
-service = MemoryService(
+service = AgentService(
     llm_provider="gemini_proxy",
-    database_url="sqlite:///./memu.db",
+    database_url="sqlite:///./agent.db",
     embedding_model="text-embedding-004",
     enable_semantic_search=True,
 )
