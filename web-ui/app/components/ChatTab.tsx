@@ -110,7 +110,7 @@ export default function ChatTab({ serverUrl }: ChatTabProps) {
             mediaRef.current = mr;
 
             let chunks: Blob[] = [];
-            const INTERVAL = 8000;
+            const INTERVAL = 3000; // 3s chunks (fast first-response)
 
             mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
@@ -234,7 +234,21 @@ export default function ChatTab({ serverUrl }: ChatTabProps) {
                                 <div className="max-w-[75%]">
                                     <div className="text-[11px] text-neutral-600 mb-1 text-right">{ts(msg.time)}</div>
                                     <div className="bg-[#1a1a2e] border border-[#252540] rounded-xl rounded-tr-sm px-3.5 py-2.5 text-sm text-neutral-200">
-                                        {msg.text}
+                                        {msg.text.includes("•") ? (
+                                            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                                                {msg.text.split("\n").map((line, i) => {
+                                                    const cleaned = line.replace(/^•\s*/, "").trim();
+                                                    return cleaned ? (
+                                                        <li key={i} style={{ position: "relative", paddingLeft: "1.25rem", marginBottom: "0.25rem" }}>
+                                                            <span style={{ position: "absolute", left: 0, color: "#a1a1aa", fontWeight: 600 }}>•</span>
+                                                            {cleaned}
+                                                        </li>
+                                                    ) : null;
+                                                })}
+                                            </ul>
+                                        ) : (
+                                            msg.text
+                                        )}
                                     </div>
                                 </div>
                             </div>

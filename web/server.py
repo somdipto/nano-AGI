@@ -52,6 +52,25 @@ STATIC_DIR = Path(__file__).parent / "static"
 NEXTJS_DIR = Path(__file__).parent.parent / "web-ui" / "out"
 
 
+# ── Bullet-point formatter ──
+def _to_bullet_points(text: str) -> str:
+    """
+    Convert a raw transcript into bullet points.
+    Splits on sentence boundaries (. ? !) and newlines,
+    then prefixes each non-empty fragment with •.
+    """
+    import re
+    # Split on sentence-ending punctuation followed by whitespace, or newlines
+    fragments = re.split(r'(?<=[.!?])\s+|\n+', text.strip())
+    # Filter out empty/whitespace-only fragments
+    points = [f.strip() for f in fragments if f.strip() and len(f.strip()) > 2]
+    if not points:
+        return text  # Fallback: return as-is if splitting yields nothing
+    if len(points) == 1:
+        return f"• {points[0]}"
+    return "\n".join(f"• {p}" for p in points)
+
+
 # ── Offline fallback ──
 def _offline_analyze(text: str) -> dict:
     t = text.lower()
@@ -118,6 +137,123 @@ async def _watch_cli_result(websocket: WebSocket, todo_id: int, task_text: str, 
         pass
 
 
+async def _process_intent_bg(websocket: WebSocket, text: str, chunk_id: int,
+                              context_window: list, ts):
+    """Background intent extraction — does NOT block the audio receive loop."""
+    try:
+        extraction = await asyncio.to_thread(
+            extract_intent, text, context_window
+        )
+
+        intent = extraction.get("category", "other")
+        priority = int(extraction.get("urgency", 1))
+        action = extraction.get("action", "ignore")
+        db.update_chunk_intent(chunk_id, intent, priority)
+
+        await websocket.send_json({
+            "type": "analysis",
+            "intent": intent,
+            "priority": priority,
+            "confidence": extraction.get("confidence", "low"),
+            "action": action,
+            "summary": extraction.get("task", text[:80]),
+            "reasoning": extraction.get("reasoning", ""),
+        })
+
+        # Send conversational reply if present
+        if extraction.get("shadow_reply"):
+            await websocket.send_json({
+                "type": "shadow_message",
+                "text": extraction["shadow_reply"],
+                "timestamp": ts.isoformat(),
+            })
+
+        # Route based on confidence
+        if extraction.get("is_refinement"):
+            conn = db._conn()
+            last_todo = conn.execute(
+                "SELECT id, task FROM todos ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if last_todo:
+                todo_id_upd = last_todo["id"]
+                db.update_chunk_intent(chunk_id, intent, priority)
+                conn.execute(
+                    "UPDATE todos SET task=?, priority=?, category=?, deadline=? WHERE id=?",
+                    (extraction.get("task", last_todo["task"]), priority,
+                     extraction.get("category", "other"),
+                     extraction.get("deadline"), todo_id_upd),
+                )
+                conn.commit()
+                await websocket.send_json({
+                    "type": "todo_updated",
+                    "id": todo_id_upd,
+                    "task": extraction.get("task", last_todo["task"]),
+                    "priority": priority,
+                    "category": extraction.get("category", "other"),
+                })
+            conn.close()
+
+        elif action == "auto_add" and extraction.get("is_task"):
+            task_text = extraction.get("task", text)
+            task_priority = priority
+            task_category = extraction.get("category", "other")
+            todo_id_new = db.insert_todo(
+                chunk_id=chunk_id,
+                task=task_text,
+                priority=task_priority,
+                category=task_category,
+                deadline=extraction.get("deadline"),
+            )
+
+            await websocket.send_json({
+                "type": "todo_auto",
+                "id": todo_id_new,
+                "task": task_text,
+                "priority": task_priority,
+                "category": task_category,
+                "action": "auto_add",
+            })
+
+            todo_dict = {
+                "id": todo_id_new,
+                "task": task_text,
+                "priority": task_priority,
+                "category": task_category,
+            }
+            slot_id = await asyncio.to_thread(
+                cli_pool.assign_task, todo_id_new, todo_dict
+            )
+
+            await websocket.send_json({
+                "type": "agent_spawned",
+                "todo_id": todo_id_new,
+                "task": task_text,
+                "slot_id": slot_id,
+            })
+
+            if slot_id is not None:
+                db.update_todo_status(todo_id_new, "active")
+                asyncio.create_task(
+                    _watch_cli_result(websocket, todo_id_new, task_text, slot_id)
+                )
+
+        elif action == "suggest" and extraction.get("is_task"):
+            await websocket.send_json({
+                "type": "shadow_message",
+                "text": f"Should I add this to your tasks? \"{extraction.get('task', text)}\"",
+                "suggestion": True,
+                "task_data": {
+                    "task": extraction.get("task", text),
+                    "priority": priority,
+                    "category": extraction.get("category", "other"),
+                },
+                "timestamp": ts.isoformat(),
+            })
+
+    except Exception as e:
+        print(f"[BG Intent] Error: {e}")
+
+
 # ══════════════════════════════════════════════
 #  WebSocket: Real-time audio
 # ══════════════════════════════════════════════
@@ -147,9 +283,12 @@ async def audio_ws(websocket: WebSocket):
             if len(data) < 1000:
                 continue
 
-            text = await asyncio.to_thread(capture.transcribe_blob, data)
-            if not text or len(text.strip()) < 8:
+            raw_text = await asyncio.to_thread(capture.transcribe_blob, data)
+            if not raw_text or len(raw_text.strip()) < 8:
                 continue
+
+            # Format transcript as bullet points
+            text = _to_bullet_points(raw_text)
 
             if all_transcripts and text.strip() == all_transcripts[-1].strip():
                 continue
@@ -172,115 +311,10 @@ async def audio_ws(websocket: WebSocket):
                 "timestamp": ts.isoformat(),
             })
 
-            # Auto-extract intent with confidence routing
-            extraction = await asyncio.to_thread(
-                extract_intent, text, list(context_window)
+            # Process intent in background — don't block next audio chunk
+            asyncio.create_task(
+                _process_intent_bg(websocket, text, chunk_id, list(context_window), ts)
             )
-
-            intent = extraction.get("category", "other")
-            priority = int(extraction.get("urgency", 1))
-            action = extraction.get("action", "ignore")
-            db.update_chunk_intent(chunk_id, intent, priority)
-
-            await websocket.send_json({
-                "type": "analysis",
-                "intent": intent,
-                "priority": priority,
-                "confidence": extraction.get("confidence", "low"),
-                "action": action,
-                "summary": extraction.get("task", text[:80]),
-                "reasoning": extraction.get("reasoning", ""),
-            })
-
-            # Send conversational reply if present
-            if extraction.get("shadow_reply"):
-                await websocket.send_json({
-                    "type": "shadow_message",
-                    "text": extraction["shadow_reply"],
-                    "timestamp": ts.isoformat(),
-                })
-
-            # Route based on confidence
-            if extraction.get("is_refinement"):
-                # Update the most recent task instead of adding a new one
-                conn = db._conn()
-                last_todo = conn.execute("SELECT id, task FROM todos ORDER BY id DESC LIMIT 1").fetchone()
-                if last_todo:
-                    todo_id = last_todo["id"]
-                    db.update_chunk_intent(chunk_id, intent, priority)
-                    conn.execute(
-                        "UPDATE todos SET task=?, priority=?, category=?, deadline=? WHERE id=?",
-                        (extraction.get("task", last_todo["task"]), priority, extraction.get("category", "other"), extraction.get("deadline"), todo_id)
-                    )
-                    conn.commit()
-                    await websocket.send_json({
-                        "type": "todo_updated",
-                        "id": todo_id,
-                        "task": extraction.get("task", last_todo["task"]),
-                        "priority": priority,
-                        "category": extraction.get("category", "other"),
-                    })
-                conn.close()
-
-            elif action == "auto_add" and extraction.get("is_task"):
-                # HIGH confidence → auto-add to To-Do and spawn agent
-                task_text = extraction.get("task", text)
-                task_priority = priority
-                task_category = extraction.get("category", "other")
-                todo_id = db.insert_todo(
-                    chunk_id=chunk_id,
-                    task=task_text,
-                    priority=task_priority,
-                    category=task_category,
-                    deadline=extraction.get("deadline"),
-                )
-
-                await websocket.send_json({
-                    "type": "todo_auto",
-                    "id": todo_id,
-                    "task": task_text,
-                    "priority": task_priority,
-                    "category": task_category,
-                    "action": "auto_add",
-                })
-
-                # Auto-assign to CLI pool
-                todo_dict = {
-                    "id": todo_id,
-                    "task": task_text,
-                    "priority": task_priority,
-                    "category": task_category,
-                }
-                slot_id = await asyncio.to_thread(
-                    cli_pool.assign_task, todo_id, todo_dict
-                )
-
-                await websocket.send_json({
-                    "type": "agent_spawned",
-                    "todo_id": todo_id,
-                    "task": task_text,
-                    "slot_id": slot_id,
-                })
-
-                if slot_id is not None:
-                    db.update_todo_status(todo_id, "active")
-                    asyncio.create_task(
-                        _watch_cli_result(websocket, todo_id, task_text, slot_id)
-                    )
-
-            elif action == "suggest" and extraction.get("is_task"):
-                # MEDIUM confidence → suggest in chat, let user decide
-                await websocket.send_json({
-                    "type": "shadow_message",
-                    "text": f"Should I add this to your tasks? \"{extraction.get('task', text)}\"",
-                    "suggestion": True,
-                    "task_data": {
-                        "task": extraction.get("task", text),
-                        "priority": priority,
-                        "category": extraction.get("category", "other"),
-                    },
-                    "timestamp": ts.isoformat(),
-                })
 
     except WebSocketDisconnect:
         pass

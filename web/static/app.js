@@ -56,7 +56,7 @@
     // ── Voice Pipeline Config ──
     // Overlap strategy: record 10s chunks, send with 3s overlap buffer
     // This prevents cutting words at chunk boundaries
-    const CHUNK_INTERVAL_MS = 10000;  // 10s chunks (longer = more context)
+    const CHUNK_INTERVAL_MS = 3000;  // 3s chunks (fast first-response)
     let prevChunkTail = '';           // Last ~3 words of previous chunk for dedup
 
     // ── Init ──
@@ -256,12 +256,26 @@
         const div = document.createElement('div');
         div.className = 'activity-card';
         const ts = timeStr();
+
+        // Render bullet-pointed transcripts as a styled list
+        let contentHTML;
+        if (text.includes('•')) {
+            const bullets = text.split('\n')
+                .map(line => line.replace(/^•\s*/, '').trim())
+                .filter(line => line.length > 0);
+            contentHTML = '<ul class="transcript-bullets">' +
+                bullets.map(b => `<li>${esc(b)}</li>`).join('') +
+                '</ul>';
+        } else {
+            contentHTML = esc(text);
+        }
+
         div.innerHTML = `
             <div class="activity-header">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
                 Transcription · ${ts}
             </div>
-            <div class="transcript-bubble">${esc(text)}</div>
+            <div class="transcript-bubble">${contentHTML}</div>
         `;
         feedMessages.appendChild(div);
         scrollToBottom();

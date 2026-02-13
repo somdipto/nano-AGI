@@ -141,7 +141,7 @@ export default function ChatFeed({ serverUrl, onTaskSpawned }: ChatFeedProps) {
             mediaRef.current = mr;
 
             let chunks: Blob[] = [];
-            const BUFFER_DURATION = 10000; // 10s buffers
+            const BUFFER_DURATION = 3000; // 3s buffers (fast first-response)
 
             mr.ondataavailable = (e) => {
                 if (e.data.size > 0) chunks.push(e.data);
@@ -203,7 +203,21 @@ export default function ChatFeed({ serverUrl, onTaskSpawned }: ChatFeedProps) {
                                 <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-xs shrink-0 mt-0.5">🎤</div>
                                 <div>
                                     <div className="text-xs text-neutral-500 mb-1">{timeStr(msg.time)}</div>
-                                    <div className="text-sm text-neutral-200">{msg.text}</div>
+                                    {msg.text.includes("•") ? (
+                                        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                                            {msg.text.split("\n").map((line, i) => {
+                                                const cleaned = line.replace(/^•\s*/, "").trim();
+                                                return cleaned ? (
+                                                    <li key={i} style={{ position: "relative", paddingLeft: "1.25rem", marginBottom: "0.25rem" }} className="text-sm text-neutral-200">
+                                                        <span style={{ position: "absolute", left: 0, color: "#a1a1aa", fontWeight: 600 }}>•</span>
+                                                        {cleaned}
+                                                    </li>
+                                                ) : null;
+                                            })}
+                                        </ul>
+                                    ) : (
+                                        <div className="text-sm text-neutral-200">{msg.text}</div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -213,8 +227,8 @@ export default function ChatFeed({ serverUrl, onTaskSpawned }: ChatFeedProps) {
                                 <span className="text-neutral-400">Analysis</span>
                                 <span className="mx-2 text-neutral-600">·</span>
                                 <span className={`font-mono ${(msg.meta?.intent as string) === "urgent" ? "text-red-400" :
-                                        (msg.meta?.intent as string) === "task" ? "text-amber-400" :
-                                            "text-neutral-500"
+                                    (msg.meta?.intent as string) === "task" ? "text-amber-400" :
+                                        "text-neutral-500"
                                     }`}>
                                     [{((msg.meta?.intent as string) || "info").toUpperCase()}]
                                 </span>
@@ -286,8 +300,8 @@ export default function ChatFeed({ serverUrl, onTaskSpawned }: ChatFeedProps) {
                     <button
                         onClick={toggleRecording}
                         className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium transition-all ${isRecording
-                                ? "bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30"
-                                : "bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30"
+                            ? "bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30"
+                            : "bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30"
                             }`}
                     >
                         {isRecording ? (

@@ -101,7 +101,7 @@ class RealTimeCapture:
             return None
 
     def transcribe(self, audio_path: str) -> str:
-        """Transcribe audio with Whisper.cpp (CPU-only for Intel Mac)."""
+        """Transcribe audio with Whisper.cpp (subprocess)."""
         cmd = [
             self._whisper_bin,
             "-m", self._model_path,
@@ -116,30 +116,68 @@ class RealTimeCapture:
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            lines = [l.strip() for l in result.stdout.split("\n") if l.strip()]
-            text = " ".join(lines) if lines else ""
-
-            # Filter whisper noise / hallucinations
-            if "[BLANK_AUDIO]" in text:
-                return ""
-            # Remove common hallucination markers
-            import re
-            text = re.sub(r'\[.*?\]', '', text)
-            text = re.sub(r'\(.*?\)', '', text)
-            # Collapse repeated phrases (whisper hallucination)
-            words = text.split()
-            if len(words) > 6:
-                # Check if last 3 words repeat
-                tail = ' '.join(words[-3:])
-                count = text.count(tail)
-                if count > 2:
-                    # Hallucination detected, trim
-                    idx = text.index(tail)
-                    text = text[:idx + len(tail)]
-            text = ' '.join(text.split())  # Normalize whitespace
-            return text.strip()
+            return self._clean_whisper_output(result.stdout)
         except (subprocess.TimeoutExpired, Exception):
             return ""
+
+    # ── Whisper server (persistent model, no subprocess overhead) ──
+    WHISPER_SERVER_URL = "http://127.0.0.1:8178/inference"
+
+    def _transcribe_via_server(self, audio_path: str) -> str:
+        """Transcribe via HTTP to a running whisper-server (model stays loaded)."""
+        import urllib.request
+        import json
+
+        try:
+            # Multipart form upload
+            boundary = "----WhisperBoundary"
+            with open(audio_path, "rb") as f:
+                audio_bytes = f.read()
+
+            body = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="file"; filename="audio.wav"\r\n'
+                f"Content-Type: audio/wav\r\n\r\n"
+            ).encode() + audio_bytes + (
+                f"\r\n--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="response_format"\r\n\r\n'
+                f"json"
+                f"\r\n--{boundary}--\r\n"
+            ).encode()
+
+            req = urllib.request.Request(
+                self.WHISPER_SERVER_URL,
+                data=body,
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                text = data.get("text", "")
+                return self._clean_whisper_output(text)
+        except Exception:
+            return None  # Signal to fall back to subprocess
+
+    @staticmethod
+    def _clean_whisper_output(raw: str) -> str:
+        """Filter whisper noise, hallucinations, normalize whitespace."""
+        import re
+        lines = [l.strip() for l in raw.split("\n") if l.strip()]
+        text = " ".join(lines) if lines else ""
+
+        if "[BLANK_AUDIO]" in text:
+            return ""
+        text = re.sub(r'\[.*?\]', '', text)
+        text = re.sub(r'\(.*?\)', '', text)
+        words = text.split()
+        if len(words) > 6:
+            tail = ' '.join(words[-3:])
+            count = text.count(tail)
+            if count > 2:
+                idx = text.index(tail)
+                text = text[:idx + len(tail)]
+        text = ' '.join(text.split())
+        return text.strip()
 
     def capture_once(self, duration: Optional[int] = None) -> tuple[str, float]:
         """Record and transcribe one chunk. Returns (text, timestamp)."""
@@ -159,7 +197,11 @@ class RealTimeCapture:
         return text, ts
 
     def transcribe_blob(self, audio_data: bytes) -> str:
-        """Transcribe raw audio bytes (from WebSocket)."""
+        """Transcribe raw audio bytes (from WebSocket).
+        
+        Tries whisper-server first (fast, persistent model),
+        falls back to subprocess if server is not running.
+        """
         tmp = tempfile.NamedTemporaryFile(
             suffix=".wav", prefix="shadow_ws_", delete=False, dir="/tmp"
         )
@@ -167,8 +209,12 @@ class RealTimeCapture:
         tmp.close()
 
         try:
-            text = self.transcribe(tmp.name)
-            return text
+            # Try whisper-server first (no model reload per chunk)
+            text = self._transcribe_via_server(tmp.name)
+            if text is not None:
+                return text
+            # Fallback to subprocess
+            return self.transcribe(tmp.name)
         finally:
             try:
                 os.unlink(tmp.name)
