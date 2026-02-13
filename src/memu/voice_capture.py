@@ -123,6 +123,7 @@ class WhisperCapture:
             "--no-timestamps",
             "-np",               # No prints except result
             "--language", "en",
+            "--no-gpu",          # CPU-only (Metal crashes on pre-M1 Macs)
         ]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
