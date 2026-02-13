@@ -229,7 +229,6 @@ text = await capture.transcribe_realtime()
 <td width="50%">
 
 ### 🔧 **Technical**
-- [API Reference](docs/api/)
 - [Architecture](report.md)
 - [Database Schema](src/memu/database/sqlite/schema.py)
 - [Contributing](CONTRIBUTING.md)
