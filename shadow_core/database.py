@@ -85,6 +85,28 @@ class ShadowDatabase:
             )
         """)
 
+        # Agent logs (swarm execution logs)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS agent_logs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                todo_id     INTEGER NOT NULL,
+                event       TEXT    NOT NULL,
+                detail      TEXT,
+                timestamp   REAL    DEFAULT (strftime('%s','now')),
+                FOREIGN KEY (todo_id) REFERENCES todos(id)
+            )
+        """)
+
+        # Migration: add missing columns to todos
+        try:
+            c.execute("ALTER TABLE todos ADD COLUMN completed_at REAL")
+        except Exception:
+            pass  # Column already exists
+        try:
+            c.execute("ALTER TABLE todos ADD COLUMN artifacts TEXT")
+        except Exception:
+            pass
+
         conn.commit()
         conn.close()
 
@@ -174,6 +196,41 @@ class ShadowDatabase:
         )
         conn.commit()
         conn.close()
+
+    def update_todo_workspace(self, todo_id: int, workspace_path: str, artifacts: str = "[]"):
+        conn = self._conn()
+        conn.execute(
+            "UPDATE todos SET workspace_path=?, artifacts=?, updated_at=datetime('now') WHERE id=?",
+            (workspace_path, artifacts, todo_id),
+        )
+        conn.commit()
+        conn.close()
+
+    # ── Agent logs (Swarm) ──
+
+    def insert_agent_log(self, todo_id: int, event: str, detail: str = ""):
+        conn = self._conn()
+        conn.execute(
+            "INSERT INTO agent_logs (todo_id, event, detail) VALUES (?, ?, ?)",
+            (todo_id, event, detail),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_agent_logs(self, todo_id: int | None = None, limit: int = 50) -> list[dict]:
+        conn = self._conn()
+        if todo_id:
+            rows = conn.execute(
+                "SELECT * FROM agent_logs WHERE todo_id=? ORDER BY timestamp DESC LIMIT ?",
+                (todo_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM agent_logs ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
     # ── Sessions ──
 

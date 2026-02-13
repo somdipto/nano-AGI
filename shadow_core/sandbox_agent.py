@@ -1,0 +1,353 @@
+"""
+Sandbox Agent — Isolated execution per todo.
+Each todo spawns its own process in an isolated filesystem.
+
+No heavy venvs — uses subprocess isolation + resource limits.
+"""
+
+import json
+import os
+import resource
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+
+class SandboxAgent:
+    """
+    One agent = One todo = One isolated workspace.
+
+    Creates ~/shadow-sandboxes/todo_{id}/ with:
+        - agent_runner.py  (generated script)
+        - status.json      (current state)
+        - agent.log        (execution log)
+        - <artifacts>      (emails, code, notes, etc.)
+    """
+
+    TIMEOUT = 60  # seconds max per agent
+
+    def __init__(self, todo_id: int, task: dict, workspace_root: Path):
+        self.todo_id = todo_id
+        self.task = task
+        self.workspace = workspace_root / f"todo_{todo_id}"
+        self.log_path = self.workspace / "agent.log"
+        self.status_path = self.workspace / "status.json"
+        self.process: Optional[subprocess.Popen] = None
+        self.pid: Optional[int] = None
+        self._started_at: Optional[float] = None
+
+        self._init_sandbox()
+
+    def _init_sandbox(self):
+        """Create isolated filesystem workspace."""
+        self.workspace.mkdir(parents=True, exist_ok=True)
+
+        manifest = {
+            "todo_id": self.todo_id,
+            "task": self.task,
+            "status": "initialized",
+            "created_at": datetime.now().isoformat(),
+            "artifacts": [],
+        }
+        self.status_path.write_text(json.dumps(manifest, indent=2))
+
+    def _build_agent_script(self) -> str:
+        """Generate the Python script that runs inside the sandbox."""
+        task_json = json.dumps(self.task)
+        workspace_str = str(self.workspace)
+        status_str = str(self.status_path)
+
+        # Use .replace() to avoid f-string + triple-quote nesting issues
+        script = '''#!/usr/bin/env python3
+"""Auto-generated sandbox agent for todo __TODO_ID__"""
+import json, os, sys, time
+import datetime as dt
+from pathlib import Path
+
+WORKSPACE = Path("__WORKSPACE__")
+STATUS = Path("__STATUS__")
+TASK = json.loads("""__TASK_JSON__""")
+
+def log(msg):
+    with open(WORKSPACE / "agent.log", "a") as f:
+        f.write(f"[{dt.datetime.now().strftime('%H:%M:%S')}] {msg}\\n")
+
+def update_status(status, artifacts=None):
+    data = {
+        "todo_id": __TODO_ID__,
+        "status": status,
+        "artifacts": artifacts or [],
+        "updated_at": time.time(),
+    }
+    STATUS.write_text(json.dumps(data, indent=2))
+
+def main():
+    task_text = TASK.get("task", "").lower()
+    category = TASK.get("category", "other").lower()
+    log(f"Agent started: {TASK.get('task', 'unknown')}")
+    update_status("running")
+
+    try:
+        if category == "email" or "email" in task_text:
+            draft_email()
+        elif category == "code" or any(w in task_text for w in ["code", "script", "program", "build", "implement"]):
+            draft_code()
+        elif category == "research" or any(w in task_text for w in ["research", "find", "look up", "search"]):
+            do_research()
+        elif category == "schedule" or any(w in task_text for w in ["schedule", "meeting", "calendar", "remind"]):
+            create_schedule()
+        else:
+            create_plan()
+
+        artifacts = [str(f.relative_to(WORKSPACE)) for f in WORKSPACE.iterdir()
+                     if f.is_file() and f.name not in ("agent_runner.py", "status.json", "agent.log")]
+        update_status("completed", artifacts)
+        log(f"Agent finished. Artifacts: {artifacts}")
+
+    except Exception as e:
+        log(f"ERROR: {e}")
+        update_status("failed")
+
+def draft_email():
+    task = TASK.get("task", "")
+    draft = WORKSPACE / "email_draft.txt"
+    lines = [
+        f"Subject: Re: {task}",
+        "",
+        "Dear [Recipient],",
+        "",
+        f"I'm writing regarding: {task}",
+        "",
+        "[Auto-drafted by Shadow Agent]",
+        "",
+        "Key points:",
+        "1. [Point 1]",
+        "2. [Point 2]",
+        "3. [Point 3]",
+        "",
+        "Please review and let me know if you need any changes.",
+        "",
+        "Best regards,",
+        "[Your Name]",
+    ]
+    draft.write_text("\\n".join(lines))
+    log("Created email draft")
+
+def draft_code():
+    task = TASK.get("task", "")
+    code = WORKSPACE / "solution.py"
+    lines = [
+        "#!/usr/bin/env python3",
+        f'"""Auto-generated solution for: {task}"""',
+        "",
+        "def solve():",
+        f'    """Task: {task}"""',
+        f'    print("Working on: {task}")',
+        '    return "done"',
+        "",
+        'if __name__ == "__main__":',
+        "    result = solve()",
+        '    print(f"Result: {result}")',
+    ]
+    code.write_text("\\n".join(lines))
+    readme = WORKSPACE / "README.md"
+    readme.write_text(f"# {task}\\n\\nAuto-generated by Shadow Agent.\\n\\n## Files\\n- `solution.py`\\n")
+    log("Created code scaffold + README")
+
+def do_research():
+    task = TASK.get("task", "")
+    notes = WORKSPACE / "research_notes.md"
+    lines = [
+        f"# Research: {task}",
+        "",
+        "## Summary",
+        "[Auto-generated research template]",
+        "",
+        "## Key Findings",
+        "1. Finding 1",
+        "2. Finding 2",
+        "3. Finding 3",
+        "",
+        "## Sources",
+        "- [Source 1]",
+        "- [Source 2]",
+        "",
+        "## Next Steps",
+        "- Verify findings",
+        "- Deep-dive on key topics",
+    ]
+    notes.write_text("\\n".join(lines))
+    log("Created research notes template")
+
+def create_schedule():
+    task = TASK.get("task", "")
+    sched = WORKSPACE / "schedule.md"
+    lines = [
+        f"# Schedule: {task}",
+        "",
+        "## Details",
+        f"- **What:** {task}",
+        "- **When:** [TBD]",
+        "- **Where:** [TBD]",
+        "- **Who:** [TBD]",
+        "",
+        "## Preparation",
+        "- [ ] Prepare agenda",
+        "- [ ] Send invitations",
+        "- [ ] Prepare materials",
+    ]
+    sched.write_text("\\n".join(lines))
+    log("Created schedule template")
+
+def create_plan():
+    task = TASK.get("task", "")
+    lines = [
+        f"# Plan: {task}",
+        "",
+        "## Objective",
+        task,
+        "",
+        "## Steps",
+        "1. Analyze requirements",
+        "2. Break down into sub-tasks",
+        "3. Execute each sub-task",
+        "4. Verify results",
+        "",
+        "## Notes",
+        "- Created by Shadow Agent",
+        f"- Priority: {TASK.get('priority', 5)}",
+        f"- Category: {TASK.get('category', 'other')}",
+    ]
+    plan = WORKSPACE / "plan.md"
+    plan.write_text("\\n".join(lines))
+    log("Created task plan")
+
+if __name__ == "__main__":
+    main()
+'''
+        script = script.replace("__WORKSPACE__", workspace_str)
+        script = script.replace("__STATUS__", status_str)
+        script = script.replace("__TASK_JSON__", task_json)
+        script = script.replace("__TODO_ID__", str(self.todo_id))
+        return script
+
+    def start(self) -> bool:
+        """Start agent in an isolated subprocess."""
+        script_path = self.workspace / "agent_runner.py"
+        script_path.write_text(self._build_agent_script())
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = ""  # Isolate from project imports
+        env["SHADOW_SANDBOX"] = "1"
+        env["TODO_ID"] = str(self.todo_id)
+
+        try:
+            self.process = subprocess.Popen(
+                [sys.executable, str(script_path)],
+                cwd=str(self.workspace),
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=self._set_limits,
+            )
+            self.pid = self.process.pid
+            self._started_at = time.time()
+
+            # Watchdog: kill if running too long
+            threading.Thread(target=self._watchdog, daemon=True).start()
+            return True
+
+        except Exception as e:
+            self._write_log(f"Failed to start: {e}")
+            return False
+
+    def _set_limits(self):
+        """Set resource limits for the sandboxed process (macOS-safe)."""
+        try:
+            # 30 seconds CPU time max
+            resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
+        except (ValueError, OSError):
+            pass  # Some platforms don't support this
+
+    def _watchdog(self):
+        """Kill agent if it runs beyond timeout."""
+        time.sleep(self.TIMEOUT)
+        if self.process and self.process.poll() is None:
+            self._write_log("TIMEOUT — killing agent")
+            self.process.terminate()
+            time.sleep(2)
+            if self.process.poll() is None:
+                self.process.kill()
+
+    def _write_log(self, msg: str):
+        with open(self.log_path, "a") as f:
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+
+    # ── Status & Queries ──
+
+    def status(self) -> dict:
+        """Get current agent status from status.json."""
+        if self.status_path.exists():
+            try:
+                return json.loads(self.status_path.read_text())
+            except json.JSONDecodeError:
+                return {"status": "error", "todo_id": self.todo_id}
+        return {"status": "unknown", "todo_id": self.todo_id}
+
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def elapsed(self) -> float:
+        if self._started_at:
+            return time.time() - self._started_at
+        return 0.0
+
+    def artifacts(self) -> list[str]:
+        """List artifact files created by agent (excludes internal files)."""
+        if not self.workspace.exists():
+            return []
+        skip = {"agent_runner.py", "status.json", "agent.log"}
+        return [
+            str(f.relative_to(self.workspace))
+            for f in self.workspace.iterdir()
+            if f.is_file() and f.name not in skip
+        ]
+
+    def read_artifact(self, filename: str) -> str:
+        """Read an artifact file (with directory traversal protection)."""
+        path = (self.workspace / filename).resolve()
+        if not str(path).startswith(str(self.workspace.resolve())):
+            raise PermissionError("Access denied")
+        if not path.exists():
+            raise FileNotFoundError(f"Not found: {filename}")
+        return path.read_text()
+
+    def read_log(self) -> str:
+        if self.log_path.exists():
+            return self.log_path.read_text()
+        return ""
+
+    # ── Lifecycle ──
+
+    def kill(self):
+        """Force-kill the agent process."""
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+            time.sleep(1)
+            if self.process.poll() is None:
+                self.process.kill()
+
+    def cleanup(self):
+        """Kill process and remove sandbox directory."""
+        self.kill()
+        if self.workspace.exists():
+            shutil.rmtree(self.workspace, ignore_errors=True)
+
+    def __repr__(self):
+        st = self.status().get("status", "?")
+        return f"<SandboxAgent todo={self.todo_id} status={st}>"

@@ -4,18 +4,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nano-AGI — Shadow Core</title>
-    <meta name="description" content="Autonomous voice agent: capture, analyze, execute">
+    <title>Nano-AGI — Shadow Swarm</title>
+    <meta name="description" content="Multi-agent autonomous voice intelligence system">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 
 <body>
-    <!-- Animated background -->
+    <!-- Background -->
     <div class="bg-gradient"></div>
     <div class="bg-noise"></div>
     <div class="bg-orbs">
@@ -30,31 +30,64 @@
             <div class="header-left">
                 <div class="logo">
                     <div class="logo-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <circle cx="12" cy="12" r="10" />
-                            <path d="M12 2a10 10 0 0 1 0 20" />
-                            <circle cx="12" cy="12" r="4" />
-                            <line x1="12" y1="8" x2="12" y2="2" />
-                            <line x1="12" y1="22" x2="12" y2="16" />
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                            stroke-linecap="round">
+                            <circle cx="12" cy="12" r="3" />
+                            <path
+                                d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
                         </svg>
                     </div>
                     <div class="logo-text">
                         <h1>Nano-AGI</h1>
-                        <span class="logo-sub">Shadow Core</span>
+                        <span class="logo-sub">SHADOW SWARM</span>
                     </div>
                 </div>
             </div>
+
+            <!-- Tab switcher -->
+            <nav class="tab-nav" id="tabNav">
+                <button class="tab-btn active" data-tab="listen">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                        <line x1="12" y1="19" x2="12" y2="23" />
+                    </svg>
+                    Listen
+                </button>
+                <button class="tab-btn" data-tab="swarm">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                    </svg>
+                    Swarm
+                    <span class="tab-badge" id="swarmBadge">0</span>
+                </button>
+                <button class="tab-btn" data-tab="todos">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                        <polyline points="22 4 12 14.01 9 11.01" />
+                    </svg>
+                    Todos
+                    <span class="tab-badge" id="todosBadge">0</span>
+                </button>
+            </nav>
+
             <div class="header-right">
-                <div class="agent-status" id="agentStatus">
-                    <div class="agent-dot"></div>
-                    <span>Agent: <strong id="agentState">Ready</strong></span>
+                <div class="agent-status">
+                    <span class="agent-dot"></span>
+                    Agent: <strong id="agentState">Ready</strong>
                 </div>
                 <div class="status-pill" id="statusPill">
-                    <div class="status-dot"></div>
+                    <span class="status-dot"></span>
                     <span id="statusText">Idle</span>
                 </div>
-                <button class="btn-ghost" id="historyBtn" title="Session History">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <button class="btn-ghost" id="historyBtn" title="History">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round">
                         <circle cx="12" cy="12" r="10" />
                         <polyline points="12 6 12 12 16 14" />
                     </svg>
@@ -62,116 +95,180 @@
             </div>
         </header>
 
-        <!-- Main -->
+        <!-- Main content area -->
         <main class="main">
-            <!-- Mic section -->
-            <section class="hero" id="heroSection">
-                <div class="mic-container">
-                    <div class="mic-ripple"></div>
-                    <div class="mic-ripple"></div>
-                    <div class="mic-ripple"></div>
-                    <canvas id="vizCanvas" width="280" height="280"></canvas>
-                    <button class="mic-btn" id="micBtn">
-                        <div class="mic-btn-inner">
-                            <svg class="mic-icon" id="micIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="2">
-                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-                                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                <line x1="12" y1="19" x2="12" y2="23" />
-                                <line x1="8" y1="23" x2="16" y2="23" />
+
+            <!-- TAB: Listen (voice capture) -->
+            <section class="tab-content active" id="tab-listen">
+                <!-- Hero / Mic -->
+                <div class="hero" id="heroSection">
+                    <div class="mic-container">
+                        <div class="mic-ripple"></div>
+                        <div class="mic-ripple"></div>
+                        <div class="mic-ripple"></div>
+                        <canvas id="vizCanvas" width="280" height="280"></canvas>
+                        <button class="mic-btn" id="micBtn">
+                            <div class="mic-btn-inner">
+                                <svg id="micIcon" class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round">
+                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                                    <line x1="12" y1="19" x2="12" y2="23" />
+                                    <line x1="8" y1="23" x2="16" y2="23" />
+                                </svg>
+                                <svg id="stopIcon" class="stop-icon hidden" viewBox="0 0 24 24" fill="currentColor">
+                                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                                </svg>
+                            </div>
+                        </button>
+                    </div>
+                    <div class="hero-text">
+                        <h2 id="heroTitle">Start Shadow Listening</h2>
+                        <p id="heroSub">Everything you say is captured, analyzed, and acted upon autonomously.</p>
+                    </div>
+                    <div class="timer hidden" id="timer">
+                        <span class="timer-dot"></span>
+                        <span id="timerText">00:00</span>
+                    </div>
+                </div>
+
+                <!-- Live grid (shows when recording) -->
+                <div class="live-grid hidden" id="liveGrid">
+                    <div class="panel">
+                        <div class="panel-title">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                             </svg>
-                            <svg class="stop-icon hidden" id="stopIcon" viewBox="0 0 24 24" fill="currentColor">
-                                <rect x="6" y="6" width="12" height="12" rx="2" />
-                            </svg>
+                            Transcript
+                            <span class="badge badge-accent" id="chunkBadge">0</span>
                         </div>
-                    </button>
+                        <div class="panel-body scroll-area" id="transcriptFeed"></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-title">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg>
+                            Shadow Analysis
+                            <span class="badge" id="todoBadge">0 todos</span>
+                        </div>
+                        <div class="panel-body scroll-area" id="analysisFeed"></div>
+                    </div>
                 </div>
-                <div class="hero-text">
-                    <h2 id="heroTitle">Start Shadow Listening</h2>
-                    <p id="heroSub">Everything you say is captured, analyzed, and acted upon autonomously.</p>
-                </div>
-                <div class="timer hidden" id="timer">
-                    <span class="timer-dot"></span>
-                    <span id="timerText">00:00</span>
+
+                <!-- Summary (after session) -->
+                <div class="summary-section hidden" id="summarySection">
+                    <div class="section-header">
+                        <h3>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                            Session Summary
+                        </h3>
+                    </div>
+                    <div class="summary-card" id="summaryCard"></div>
+                    <div class="summary-actions">
+                        <button class="btn-primary" id="newSessionBtn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                            New Session
+                        </button>
+                    </div>
                 </div>
             </section>
 
-            <!-- Two-column layout when recording -->
-            <div class="live-grid hidden" id="liveGrid">
-                <!-- Left: Transcript -->
-                <section class="panel transcript-panel">
-                    <div class="panel-title">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16"
-                            height="16">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                        </svg>
-                        <span>Live Transcript</span>
-                        <span class="badge" id="chunkBadge">0</span>
+            <!-- TAB: Swarm (agent monitor) -->
+            <section class="tab-content" id="tab-swarm">
+                <div class="swarm-header">
+                    <div class="swarm-stats">
+                        <div class="swarm-stat">
+                            <span class="swarm-stat-value" id="activeCount">0</span>
+                            <span class="swarm-stat-label">Active</span>
+                        </div>
+                        <div class="swarm-stat">
+                            <span class="swarm-stat-value" id="maxCount">5</span>
+                            <span class="swarm-stat-label">Max</span>
+                        </div>
+                        <div class="swarm-stat">
+                            <span class="swarm-stat-value" id="pendingCount">0</span>
+                            <span class="swarm-stat-label">Pending</span>
+                        </div>
+                        <div class="swarm-stat">
+                            <span class="swarm-stat-value" id="completedCount">0</span>
+                            <span class="swarm-stat-label">Done</span>
+                        </div>
                     </div>
-                    <div class="panel-body scroll-area" id="transcriptFeed">
-                        <div class="panel-empty">Listening... speak and words appear here.</div>
-                    </div>
-                </section>
-
-                <!-- Right: Analysis + Todos -->
-                <section class="panel analysis-panel">
-                    <div class="panel-title">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16"
-                            height="16">
-                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                            <polyline points="22 4 12 14.01 9 11.01" />
+                    <button class="btn-danger" id="killAllBtn" title="Emergency stop">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="15" y1="9" x2="9" y2="15" />
+                            <line x1="9" y1="9" x2="15" y2="15" />
                         </svg>
-                        <span>Shadow Analysis</span>
-                        <span class="badge badge-accent" id="todoBadge">0 todos</span>
-                    </div>
-                    <div class="panel-body scroll-area" id="analysisFeed">
-                        <div class="panel-empty">Agent analyzing in real-time...</div>
-                    </div>
-                </section>
-            </div>
-
-            <!-- Summary section -->
-            <section class="summary-section hidden" id="summarySection">
-                <div class="section-header">
-                    <h3>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"
-                            height="18">
-                            <polygon
-                                points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                        </svg>
-                        Session Report
-                    </h3>
-                </div>
-                <div class="summary-card" id="summaryCard"></div>
-                <div class="summary-actions">
-                    <button class="btn-primary" id="newSessionBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16"
-                            height="16">
-                            <line x1="12" y1="5" x2="12" y2="19" />
-                            <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                        New Session
+                        Kill All
                     </button>
                 </div>
+
+                <h3 class="section-label">Active Agents</h3>
+                <div class="agent-grid" id="agentGrid">
+                    <div class="panel-empty">No active agents. Waiting for high-priority todos...</div>
+                </div>
+
+                <h3 class="section-label" style="margin-top: 20px;">Recently Completed</h3>
+                <div class="completed-list" id="completedList">
+                    <div class="panel-empty">No completed tasks yet.</div>
+                </div>
             </section>
+
+            <!-- TAB: Todos (queue + management) -->
+            <section class="tab-content" id="tab-todos">
+                <div class="todo-queue" id="todoQueue">
+                    <div class="panel-empty">No todos yet. Start a voice session to extract tasks.</div>
+                </div>
+            </section>
+
         </main>
+    </div>
 
-        <!-- History panel -->
-        <aside class="history-panel" id="historyPanel">
-            <div class="sidebar-header">
-                <h3>History</h3>
-                <button class="btn-ghost btn-sm" id="closeHistory">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+    <!-- History sidebar -->
+    <div class="history-panel" id="historyPanel">
+        <div class="sidebar-header">
+            <h3>Session History</h3>
+            <button class="btn-ghost btn-sm" id="closeHistory">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+            </button>
+        </div>
+        <div class="sidebar-body scroll-area" id="historyList"></div>
+    </div>
+    <div class="overlay hidden" id="overlay"></div>
+
+    <!-- Sandbox file viewer modal -->
+    <div class="modal hidden" id="sandboxModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">Sandbox Files</h3>
+                <button class="btn-ghost btn-sm" id="closeModal">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        stroke-linecap="round">
                         <line x1="18" y1="6" x2="6" y2="18" />
                         <line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
                 </button>
             </div>
-            <div class="sidebar-body" id="historyList">
-                <div class="panel-empty">No sessions yet.</div>
-            </div>
-        </aside>
-        <div class="overlay hidden" id="overlay"></div>
+            <div class="modal-body scroll-area" id="modalBody"></div>
+        </div>
     </div>
 
     <script src="/static/app.js"></script>

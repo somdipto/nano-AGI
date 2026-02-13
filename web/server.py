@@ -1,9 +1,7 @@
+#!/usr/bin/env python3
 """
-Nano-AGI — Shadow Core Web Server
-Premium voice capture + real-time analysis + autonomous task extraction.
-
-Run:  ./.venv/bin/python3 web/server.py
-Open: http://localhost:3777
+Nano-AGI — Shadow Core Web Server.
+FastAPI + WebSocket with Shadow Swarm integration.
 """
 
 import asyncio
@@ -14,161 +12,112 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-
-# Add project root to path
+# Ensure shadow_core is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, FileResponse
+import uvicorn
+
 from shadow_core.database import ShadowDatabase
-from shadow_core.capture import RealTimeCapture
 from shadow_core.agent import ShadowAgent, get_agent
+from shadow_core.capture import RealTimeCapture
+from shadow_core.swarm import ShadowSwarm, get_swarm
 
-# ── App ──
+# ── Setup ──
+db = ShadowDatabase()
+agent = get_agent()
+capture = RealTimeCapture()
+swarm = get_swarm(db=db, max_parallel=5)
 
-app = FastAPI(title="Nano-AGI", docs_url=None, redoc_url=None)
+app = FastAPI(title="Nano-AGI", version="2.0")
 
 STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-# ── Shared state ──
+# ── Offline fallback ──
+def _offline_analyze(text: str) -> dict:
+    t = text.lower()
+    urgent = ["urgent", "asap", "emergency", "deadline", "immediately"]
+    tasks = ["need to", "have to", "should", "must", "todo", "remind me", "don't forget"]
+    questions = ["what", "how", "why", "when", "where", "who"]
 
-db = ShadowDatabase()
-capture = RealTimeCapture()
-agent = get_agent()
+    if any(w in t for w in urgent):
+        intent, priority = "urgent", 9
+    elif any(w in t for w in tasks):
+        intent, priority = "task", 6
+    elif t.rstrip().endswith("?") or any(t.startswith(w) for w in questions):
+        intent, priority = "question", 4
+    else:
+        intent, priority = "casual", 2
 
-print()
-print("=" * 55)
-print("   NANO-AGI — Shadow Core")
-print("=" * 55)
-print(f"   Database:  {db.db_path}")
-print(f"   Agent:     {'🟢 online' if agent.available else '🟡 offline (local mode)'}")
-print(f"   Whisper:   {capture._whisper_bin}")
-print()
+    return {
+        "intent": intent,
+        "priority": priority,
+        "confidence": 0.5,
+        "summary": text[:100],
+        "extracted_tasks": [],
+    }
 
-# ── Routes ──
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
-
-
-@app.get("/api/stats")
-async def stats():
-    return db.get_stats()
-
-
-@app.get("/api/sessions")
-async def list_sessions():
-    return db.get_sessions()
-
-
-@app.get("/api/todos")
-async def list_todos():
-    return db.get_all_todos()
-
-
-@app.get("/api/chunks")
-async def list_chunks():
-    return db.get_recent_chunks(limit=50)
-
-
-@app.post("/api/todos/{todo_id}/status")
-async def update_todo(todo_id: int, body: dict):
-    status = body.get("status", "done")
-    db.update_todo_status(todo_id, status)
-    return {"ok": True}
-
-
-# ── WebSocket — Real-time audio ──
-
+# ── WebSocket: Real-time audio ──
 @app.websocket("/ws/audio")
 async def audio_ws(websocket: WebSocket):
-    """
-    Browser sends audio chunks → Whisper transcribes → Agent analyzes → UI updates.
-
-    Messages FROM server:
-      session_started  → { session_id }
-      transcript       → { text, timestamp, chunk_id, analysis }
-      todo             → { id, task, priority, category }
-      session_ended    → { summary, stats }
-    """
     await websocket.accept()
 
     session_id = str(uuid.uuid4())[:8]
     db.create_session(session_id)
-
-    await websocket.send_json({"type": "session_started", "session_id": session_id})
-
-    start_time = datetime.now()
     chunk_count = 0
-    all_transcripts: list[str] = []
-    context_window: list[str] = []
+    all_transcripts = []
+    context_window = []
+    start_time = datetime.now()
+
+    await websocket.send_json({"type": "session_started", "session": session_id})
 
     try:
         while True:
-            # Receive audio blob
             data = await websocket.receive_bytes()
             if len(data) < 500:
                 continue
 
-            chunk_count += 1
-
-            # Run transcription in thread (blocking I/O)
+            # Transcribe
             text = await asyncio.to_thread(capture.transcribe_blob, data)
-
             if not text or len(text.strip()) < 4:
-                # Send heartbeat so UI knows we're alive
-                await websocket.send_json({
-                    "type": "heartbeat",
-                    "chunk": chunk_count,
-                })
                 continue
 
-            text = text.strip()
             ts = datetime.now()
+            chunk_count += 1
             all_transcripts.append(text)
+            context_window.append(text)
+            if len(context_window) > 10:
+                context_window.pop(0)
 
             # Store chunk
             chunk_id = db.insert_chunk(
                 timestamp=ts.timestamp(),
                 text=text,
+                intent=None,
+                priority=0,
             )
 
-            # Update context
-            context_window.append(text)
-            if len(context_window) > 10:
-                context_window.pop(0)
-
-            # Send transcript immediately (before analysis)
             await websocket.send_json({
                 "type": "transcript",
                 "text": text,
-                "timestamp": ts.isoformat(),
                 "chunk": chunk_count,
-                "chunk_id": chunk_id,
+                "timestamp": ts.isoformat(),
             })
 
-            # Analyze with Shadow Agent (in thread)
+            # Analyze
             if agent.available:
-                analysis = await asyncio.to_thread(
-                    agent.analyze_chunk, text, context_window
-                )
+                analysis = await asyncio.to_thread(agent.analyze_chunk, text, context_window)
             else:
-                # Offline heuristics
                 analysis = _offline_analyze(text)
 
             intent = analysis.get("intent", "ignore")
             priority = analysis.get("priority", 1)
-
-            # Update chunk with analysis
             db.update_chunk_intent(chunk_id, intent, priority)
 
-            # Send analysis
             await websocket.send_json({
                 "type": "analysis",
-                "chunk_id": chunk_id,
                 "intent": intent,
                 "priority": priority,
                 "confidence": analysis.get("confidence", 0),
@@ -197,65 +146,151 @@ async def audio_ws(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        try:
-            await websocket.send_json({"type": "error", "message": str(e)[:200]})
-        except Exception:
-            pass
-    finally:
-        # Session ended — generate summary
-        elapsed = int((datetime.now() - start_time).total_seconds())
+        print(f"[WS] Error: {e}")
 
-        if all_transcripts and agent.available:
-            summary = await asyncio.to_thread(
-                agent.summarize_session, all_transcripts, elapsed
+    # End session
+    duration = int((datetime.now() - start_time).total_seconds())
+    summary_text = ""
+    if all_transcripts and agent.available:
+        try:
+            summary_text = await asyncio.to_thread(
+                agent.summarize_session, all_transcripts, duration
             )
-        elif all_transcripts:
-            full = " ".join(all_transcripts)
-            wc = len(full.split())
-            summary = f"{elapsed // 60}m {elapsed % 60}s • {wc} words • {len(all_transcripts)} chunks"
-        else:
-            summary = "No speech detected."
-
-        db.end_session(session_id, elapsed, chunk_count, summary)
-
-        try:
-            await websocket.send_json({
-                "type": "session_ended",
-                "session_id": session_id,
-                "summary": summary,
-                "duration": elapsed,
-                "chunks": chunk_count,
-                "transcripts": len(all_transcripts),
-            })
         except Exception:
-            pass
-
-
-def _offline_analyze(text: str) -> dict:
-    """Heuristic analysis when CLIProxyAPI is unavailable."""
-    tl = text.lower()
-    if any(w in tl for w in ["urgent", "asap", "deadline", "emergency"]):
-        return {"intent": "urgent", "priority": 9, "confidence": 0.6, "summary": text[:80], "extracted_tasks": []}
-    elif any(w in tl for w in ["need to", "have to", "should", "must", "todo", "remind"]):
-        return {"intent": "task", "priority": 6, "confidence": 0.5, "summary": text[:80], "extracted_tasks": []}
-    elif text.rstrip().endswith("?"):
-        return {"intent": "question", "priority": 4, "confidence": 0.5, "summary": text[:80], "extracted_tasks": []}
+            summary_text = " ".join(all_transcripts)
     else:
-        return {"intent": "casual", "priority": 2, "confidence": 0.4, "summary": text[:80], "extracted_tasks": []}
+        summary_text = " ".join(all_transcripts) if all_transcripts else "No speech detected."
 
+    db.end_session(session_id, duration, chunk_count, summary_text)
 
-# ── Run ──
+    try:
+        await websocket.send_json({
+            "type": "session_ended",
+            "session": session_id,
+            "duration": duration,
+            "chunks": chunk_count,
+            "summary": summary_text,
+        })
+    except Exception:
+        pass
 
+# ── WebSocket: Swarm live updates ──
+@app.websocket("/ws/swarm")
+async def swarm_ws(websocket: WebSocket):
+    """Push swarm status to UI every 2 seconds."""
+    await websocket.accept()
+    try:
+        while True:
+            status = swarm.get_status()
+            pending = db.get_pending_todos(min_priority=1)
+            completed = db.get_all_todos(limit=20)
+            completed = [t for t in completed if t.get("status") in ("completed", "approved")]
+
+            await websocket.send_json({
+                "type": "swarm_update",
+                "swarm": status,
+                "pending_count": len(pending),
+                "completed_count": len(completed),
+            })
+            await asyncio.sleep(2)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+
+# ── REST: Stats ──
+@app.get("/api/stats")
+def get_stats():
+    stats = db.get_stats()
+    swarm_status = swarm.get_status()
+    stats["active_agents"] = swarm_status["active_count"]
+    stats["max_agents"] = swarm_status["max_parallel"]
+    return stats
+
+# ── REST: Sessions ──
+@app.get("/api/sessions")
+def get_sessions():
+    return db.get_sessions()
+
+# ── REST: Todos ──
+@app.get("/api/todos")
+def get_todos(status: str = None):
+    if status:
+        conn = db._conn()
+        rows = conn.execute(
+            "SELECT * FROM todos WHERE status=? ORDER BY priority DESC",
+            (status,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    return db.get_all_todos(limit=100)
+
+@app.post("/api/todos/{todo_id}/approve")
+def approve_todo(todo_id: int):
+    success = swarm.approve_todo(todo_id)
+    return {"success": success, "todo_id": todo_id}
+
+@app.post("/api/todos/{todo_id}/reject")
+def reject_todo(todo_id: int):
+    success = swarm.reject_todo(todo_id)
+    return {"success": success, "todo_id": todo_id}
+
+@app.post("/api/todos/{todo_id}/spawn")
+def spawn_agent(todo_id: int):
+    """Manually trigger a sandbox agent for a specific todo."""
+    todos = db.get_all_todos(limit=200)
+    todo = next((t for t in todos if t["id"] == todo_id), None)
+    if not todo:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    success = swarm.spawn_for_todo(todo_id, todo)
+    return {"success": success, "todo_id": todo_id}
+
+# ── REST: Swarm ──
+@app.get("/api/swarm/status")
+def swarm_status():
+    return swarm.get_status()
+
+@app.get("/api/swarm/sandbox/{todo_id}/files")
+def sandbox_files(todo_id: int):
+    files = swarm.get_sandbox_files(todo_id)
+    if not files:
+        raise HTTPException(status_code=404, detail="Sandbox not found")
+    return files
+
+@app.get("/api/swarm/sandbox/{todo_id}/file")
+def sandbox_file(todo_id: int, path: str):
+    try:
+        content = swarm.read_sandbox_file(todo_id, path)
+        return {"path": path, "content": content}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+@app.post("/api/swarm/kill-all")
+def kill_all():
+    swarm.kill_all()
+    return {"success": True}
+
+# ── Static files + SPA ──
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+@app.get("/")
+def index():
+    return FileResponse(str(STATIC_DIR / "index.html"))
+
+# ── Main ──
 if __name__ == "__main__":
-    import uvicorn
+    print("\n" + "=" * 55)
+    print("   NANO-AGI — Shadow Swarm")
+    print("=" * 55)
+    print(f"   Database:  {db.db_path}")
+    print(f"   Agent:     {'🟢 online' if agent.available else '🔴 offline (local mode)'}")
+    print(f"   Swarm:     max {swarm.max_parallel} parallel agents")
+    print(f"   Sandboxes: {swarm.workspace_root}")
+    print()
 
-    print(f"🌐  Open: http://localhost:3777")
-    print(f"⏹️   Press Ctrl+C to stop\n")
+    # Start swarm background loops
+    swarm.start()
 
-    uvicorn.run(
-        "server:app",
-        host="0.0.0.0",
-        port=3777,
-        reload=False,
-        log_level="info",
-    )
+    uvicorn.run(app, host="0.0.0.0", port=3777)
