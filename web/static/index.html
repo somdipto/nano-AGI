@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Memory — Shadow Listener</title>
+    <meta name="description" content="24/7 Voice Memory: Record, Transcribe, Remember Everything">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Animated background -->
+    <div class="bg-gradient"></div>
+    <div class="bg-noise"></div>
+    <div class="bg-orbs">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <!-- Main container -->
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                            <line x1="12" y1="19" x2="12" y2="23"/>
+                            <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    </div>
+                    <div class="logo-text">
+                        <h1>Voice Memory</h1>
+                        <span class="logo-sub">Shadow Listener</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="status-pill" id="statusPill">
+                    <div class="status-dot"></div>
+                    <span id="statusText">Ready</span>
+                </div>
+                <button class="btn-ghost" id="historyBtn" title="Session History">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main content area -->
+        <main class="main">
+            <!-- Hero section — mic button -->
+            <section class="hero" id="heroSection">
+                <div class="mic-container">
+                    <!-- Ripple rings -->
+                    <div class="mic-ripple" id="ripple1"></div>
+                    <div class="mic-ripple" id="ripple2"></div>
+                    <div class="mic-ripple" id="ripple3"></div>
+
+                    <!-- Audio visualizer ring -->
+                    <canvas id="vizCanvas" width="280" height="280"></canvas>
+
+                    <!-- Main mic button -->
+                    <button class="mic-btn" id="micBtn" aria-label="Start recording">
+                        <div class="mic-btn-inner">
+                            <svg class="mic-icon" id="micIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                <line x1="12" y1="19" x2="12" y2="23"/>
+                                <line x1="8" y1="23" x2="16" y2="23"/>
+                            </svg>
+                            <svg class="stop-icon hidden" id="stopIcon" viewBox="0 0 24 24" fill="currentColor">
+                                <rect x="6" y="6" width="12" height="12" rx="2"/>
+                            </svg>
+                        </div>
+                    </button>
+                </div>
+
+                <div class="hero-text">
+                    <h2 id="heroTitle">Tap to Start Listening</h2>
+                    <p id="heroSub">Everything you say will be captured, transcribed, and remembered.</p>
+                </div>
+
+                <!-- Timer -->
+                <div class="timer hidden" id="timer">
+                    <span class="timer-dot"></span>
+                    <span id="timerText">00:00</span>
+                </div>
+            </section>
+
+            <!-- Live transcript feed -->
+            <section class="transcript-section hidden" id="transcriptSection">
+                <div class="section-header">
+                    <h3>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        Live Transcript
+                    </h3>
+                    <span class="badge" id="chunkBadge">0 chunks</span>
+                </div>
+                <div class="transcript-feed" id="transcriptFeed">
+                    <div class="transcript-empty">
+                        <p>Listening... Speak and your words will appear here.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Summary section -->
+            <section class="summary-section hidden" id="summarySection">
+                <div class="section-header">
+                    <h3>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                        </svg>
+                        Session Summary
+                    </h3>
+                </div>
+                <div class="summary-card" id="summaryCard">
+                    <!-- Filled dynamically -->
+                </div>
+                <button class="btn-primary" id="newSessionBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                        <line x1="12" y1="5" x2="12" y2="19"/>
+                        <line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    New Session
+                </button>
+            </section>
+        </main>
+
+        <!-- History panel (slide-in) -->
+        <aside class="history-panel" id="historyPanel">
+            <div class="panel-header">
+                <h3>Session History</h3>
+                <button class="btn-ghost" id="closeHistory">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="panel-body" id="historyList">
+                <div class="empty-state">No sessions yet. Start recording!</div>
+            </div>
+        </aside>
+
+        <!-- Overlay -->
+        <div class="overlay hidden" id="overlay"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
