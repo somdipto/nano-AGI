@@ -74,7 +74,7 @@ class SQLiteMemoryItemRepo(SQLiteRepoBase, MemoryItemRepo):
             resource_id=row.resource_id,
             memory_type=row.memory_type,
             summary=row.summary,
-            embedding=self._normalize_embedding(row.embedding_json),
+            embedding=self._normalize_embedding(row.embedding),
             created_at=row.created_at,
             updated_at=row.updated_at,
             **self._scope_kwargs_from(row),
@@ -105,7 +105,7 @@ class SQLiteMemoryItemRepo(SQLiteRepoBase, MemoryItemRepo):
                 resource_id=row.resource_id,
                 memory_type=row.memory_type,
                 summary=row.summary,
-                embedding=self._normalize_embedding(row.embedding_json),
+                embedding=self._normalize_embedding(row.embedding),
                 created_at=row.created_at,
                 updated_at=row.updated_at,
                 **self._scope_kwargs_from(row),
@@ -139,7 +139,7 @@ class SQLiteMemoryItemRepo(SQLiteRepoBase, MemoryItemRepo):
                     resource_id=row.resource_id,
                     memory_type=row.memory_type,
                     summary=row.summary,
-                    embedding=self._normalize_embedding(row.embedding_json),
+                    embedding=self._normalize_embedding(row.embedding),
                     created_at=row.created_at,
                     updated_at=row.updated_at,
                     **self._scope_kwargs_from(row),
@@ -188,7 +188,7 @@ class SQLiteMemoryItemRepo(SQLiteRepoBase, MemoryItemRepo):
             resource_id=resource_id,
             memory_type=memory_type,
             summary=summary,
-            embedding_json=self._prepare_embedding(embedding),
+            embedding=embedding,
             created_at=now,
             updated_at=now,
             **user_data,
@@ -246,7 +246,7 @@ class SQLiteMemoryItemRepo(SQLiteRepoBase, MemoryItemRepo):
             if summary is not None:
                 row.summary = summary
             if embedding is not None:
-                row.embedding_json = self._prepare_embedding(embedding)
+                row.embedding = embedding
             row.updated_at = self._now()
 
             session.add(row)
@@ -258,7 +258,7 @@ class SQLiteMemoryItemRepo(SQLiteRepoBase, MemoryItemRepo):
             resource_id=row.resource_id,
             memory_type=row.memory_type,
             summary=row.summary,
-            embedding=self._normalize_embedding(row.embedding_json),
+            embedding=self._normalize_embedding(row.embedding),
             created_at=row.created_at,
             updated_at=row.updated_at,
             **self._scope_kwargs_from(row),
