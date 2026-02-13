@@ -9,8 +9,6 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-**[Features](#-features)** • **[Quick Start](#-quick-start)** • **[Documentation](#-documentation)** • **[Examples](#-examples)** • **[Architecture](#-architecture)**
-
 <img src="https://img.shields.io/badge/Status-Production%20Ready-success" alt="Status">
 <img src="https://img.shields.io/badge/Cost-$0%20Free-brightgreen" alt="Cost">
 <img src="https://img.shields.io/badge/Privacy-100%25%20Local-blue" alt="Privacy">
