@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🤖 nano-AGI - Autonomous AI Agent Framework
+# 🧠 nano-AGI - Autonomous AI Agent Framework
 
 ### *Shadow Agent: Your 24/7 Intelligent Assistant*
 
