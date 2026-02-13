@@ -719,3 +719,130 @@ body {
     color: var(--muted-foreground);
     font-size: 0.875rem;
 }
+
+/* ── Agent Progress Card (animated) ── */
+.agent-working-card {
+    background: rgba(59, 130, 246, 0.06);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-top: 0.5rem;
+}
+
+.agent-working-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--blue);
+}
+
+.agent-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--blue);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.agent-working-task {
+    font-size: 0.8125rem;
+    color: var(--muted-foreground);
+    margin-top: 0.5rem;
+}
+
+.agent-working-dots {
+    display: flex;
+    gap: 0.25rem;
+    margin-top: 0.75rem;
+    font-size: 0.5rem;
+    color: var(--blue);
+}
+
+.agent-working-dots span {
+    animation: dot-bounce 1.4s ease-in-out infinite both;
+}
+
+.agent-working-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.agent-working-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes dot-bounce {
+
+    0%,
+    80%,
+    100% {
+        opacity: 0.3;
+        transform: translateY(0);
+    }
+
+    40% {
+        opacity: 1;
+        transform: translateY(-3px);
+    }
+}
+
+/* ── Agent Result Card ── */
+.agent-result-card {
+    background: rgba(16, 185, 129, 0.04);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 10px;
+    padding: 1rem;
+    margin-top: 0.5rem;
+}
+
+.agent-result-header {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--foreground);
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.agent-result-body {
+    font-size: 0.8125rem;
+    line-height: 1.7;
+    color: var(--muted-foreground);
+}
+
+.agent-result-body strong {
+    color: var(--foreground);
+}
+
+.agent-result-body h2,
+.agent-result-body h3,
+.agent-result-body h4 {
+    color: var(--foreground);
+    font-size: 0.875rem;
+}
+
+.agent-result-body li {
+    list-style: disc;
+}
+
+.agent-result-body .code-block {
+    background: var(--muted);
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    margin: 0.5rem 0;
+    white-space: pre-wrap;
+}
+
+.agent-result-body .inline-code {
+    background: var(--muted);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    border: 1px solid var(--border);
+}
